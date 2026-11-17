@@ -1,0 +1,106 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Mesa de Derechos</title><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="Mesa"><meta name="theme-color" content="#0E5C6B"><meta name="robots" content="noindex">
+<style>#boot{position:fixed;inset:0;z-index:999;background:#F5F5F7;display:flex;align-items:center;justify-content:center;font:16px -apple-system,BlinkMacSystemFont,system-ui,sans-serif;color:#1D1D1F;padding:24px}
+#boot .bbox{max-width:360px;width:100%;text-align:center}#boot img{width:120px}#boot h1{font-size:22px;margin:10px 0 18px}#boot input{display:block;width:100%;box-sizing:border-box;font:inherit;padding:10px 12px;margin:0 0 10px;border:1px solid #D2D2D7;border-radius:10px}
+.bbtn{font:600 16px -apple-system,system-ui,sans-serif;background:#0E5C6B;color:#fff;border:0;border-radius:12px;padding:12px 20px;width:100%;cursor:pointer}.bnote{color:#6E6E73;font-size:13px;margin-top:12px}.berr{color:#B3261E}
+@media (prefers-color-scheme:dark){#boot{background:#1C1C1E;color:#F5F5F7}}</style></head><body>
+<div id="boot"><div class="bbox"><h1>Mesa de Derechos</h1><div id="bootmsg">Cargando…</div></div></div>
+<script>/* Mesa de Derechos — versión web: inicio de sesión Microsoft + OneDrive (sustituye a la app del Mac) */
+(function(){
+var CFG={clientId:"/*CLIENT_ID*/",tenant:"/*TENANT*/"};
+try{var lc=JSON.parse(localStorage.getItem("mesa.web.cfg")||"null");if(lc&&lc.clientId&&!/\/\*/.test(lc.clientId))CFG=lc}catch(e){}
+if(/^\/\*/.test(CFG.clientId))CFG={clientId:"",tenant:""};
+var SC="offline_access User.Read Files.ReadWrite Mail.ReadWrite",RED=location.origin+location.pathname,APPDIR="Mesa de Derechos",DATA=APPDIR+"/datos/cambios.json",SEEDP=APPDIR+"/app/seed.json";
+var TK="mesa.web.tok",G="https://graph.microsoft.com/v1.0";
+function $(s){return document.querySelector(s)}
+function msg(h){var m=$("#bootmsg");if(m)m.innerHTML=h}
+function auth(){return "https://login.microsoftonline.com/"+(CFG.tenant||"organizations")+"/oauth2/v2.0/"}
+function b64u(buf){return btoa(String.fromCharCode.apply(null,new Uint8Array(buf))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"")}
+function rnd(n){var a=new Uint8Array(n);crypto.getRandomValues(a);return b64u(a)}
+async function login(prompt){var v=rnd(48),st=rnd(16),ch=b64u(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(v)));sessionStorage.setItem("mesa.pkce",JSON.stringify({v:v,st:st}));
+  location.href=auth()+"authorize?"+new URLSearchParams({client_id:CFG.clientId,response_type:"code",redirect_uri:RED,response_mode:"query",scope:SC,code_challenge:ch,code_challenge_method:"S256",state:st,prompt:prompt||"select_account"})}
+async function tokenReq(p){var r=await fetch(auth()+"token",{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body:new URLSearchParams(Object.assign({client_id:CFG.clientId,scope:SC},p))});var j=await r.json();if(!r.ok)throw Object.assign(new Error(j.error_description||j.error||"error"),{code:j.error});
+  var t={at:j.access_token,rt:j.refresh_token,exp:Date.now()+(j.expires_in-120)*1000};try{localStorage.setItem(TK,JSON.stringify(t))}catch(e){}return t}
+var tok=null;try{tok=JSON.parse(localStorage.getItem(TK)||"null")}catch(e){}
+async function at(){if(tok&&tok.exp>Date.now())return tok.at;if(tok&&tok.rt){try{tok=await tokenReq({grant_type:"refresh_token",refresh_token:tok.rt});return tok.at}catch(e){}}var e=new Error("login");e.login=true;throw e}
+async function gf(method,path,body,hdr,raw){var t=await at(),h=Object.assign({Authorization:"Bearer "+t},hdr||{});if(body!==undefined&&!raw&&!(body instanceof Blob)&&!(body instanceof ArrayBuffer)){h["Content-Type"]="application/json";body=JSON.stringify(body)}
+  var r=await fetch(path.indexOf("https://")===0?path:G+path,{method:method,headers:h,body:body});if(r.status===401){tok=null;try{localStorage.removeItem(TK)}catch(e){}var e=new Error("login");e.login=true;throw e}return r}
+function dp(rel){return "/me/drive/root:/"+String(rel).split("/").filter(Boolean).map(encodeURIComponent).join("/")+":"}
+async function gjson(m,p,b,h){var r=await gf(m,p,b,h);if(!r.ok){var j={};try{j=await r.json()}catch(e){}throw Object.assign(new Error((j.error&&j.error.message)||("HTTP "+r.status)),{status:r.status})}return r.status===204?{}:r.json()}
+/* ---- cambios.json: caché local + guardado con control de versiones ---- */
+var base={},etag=null,queue=Promise.resolve(),me={};
+async function loadPatch(){var r=await gf("GET",dp(DATA));if(r.status===404){base={};etag=null;return}if(!r.ok)throw new Error("No se ha podido leer cambios.json ("+r.status+")");
+  var meta=await gjson("GET",dp(DATA)+"?$select=eTag,lastModifiedDateTime");etag=meta.eTag;var txt=await (await gf("GET",dp(DATA)+"/content")).text();base=txt?JSON.parse(txt):{};}
+function diff(a,b){var ch={};Object.keys(b).forEach(function(c){var A=a[c]||{},B=b[c]||{};Object.keys(B).forEach(function(id){if(JSON.stringify(A[id])!==JSON.stringify(B[id])){(ch[c]=ch[c]||{})[id]=B[id]}})});return ch}
+function push(obj){var ch=diff(base,obj);if(!Object.keys(ch).length)return;Object.keys(ch).forEach(function(c){base[c]=base[c]||{};Object.keys(ch[c]).forEach(function(id){base[c][id]=ch[c][id]})});
+  queue=queue.then(async function(){for(var i=0;i<4;i++){try{var meta=await gjson("GET",dp(DATA)+"?$select=eTag");var cur=JSON.parse(await (await gf("GET",dp(DATA)+"/content")).text()||"{}");
+        Object.keys(ch).forEach(function(c){cur[c]=cur[c]||{};Object.keys(ch[c]).forEach(function(id){cur[c][id]=ch[c][id]})});
+        var r=await gf("PUT",dp(DATA)+"/content",new Blob([JSON.stringify(cur)],{type:"application/json"}),{"If-Match":meta.eTag,"Content-Type":"application/json"});
+        if(r.status===412)continue;if(!r.ok)throw new Error("HTTP "+r.status);var j=await r.json();etag=j.eTag;base=cur;setSync("ok");return}catch(e){if(e.login){setSync("login");return}if(i===3){setSync("err",e.message)}}}}).catch(function(){})}
+function setSync(s,m){var n=document.getElementById("syncNote");if(!n)return;n.innerHTML=s==="ok"?'<span class="dot"></span>Guardado en OneDrive':s==="login"?'<span class="dot" style="background:var(--bad)"></span>Sesión caducada · <a href="#" id="relog">entrar</a>':'<span class="dot" style="background:var(--bad)"></span>No se ha podido guardar: '+(m||"");var a=document.getElementById("relog");if(a)a.onclick=function(e){e.preventDefault();login("none")}}
+async function poll(){try{var meta=await gjson("GET",dp(DATA)+"?$select=eTag");if(etag&&meta.eTag!==etag&&!document.getElementById("updBar")){var b=document.createElement("div");b.id="updBar";b.className="updbar";b.innerHTML='Hay cambios hechos desde otro dispositivo. <button class="btn primary">Actualizar</button>';b.querySelector("button").onclick=function(){queue.then(function(){location.reload()})};document.body.appendChild(b)}}catch(e){}}
+/* ---- lector de Excel en el navegador ---- */
+async function inflate(u8){var ds=new DecompressionStream("deflate-raw"),w=ds.writable.getWriter();w.write(u8);w.close();return new Uint8Array(await new Response(ds.readable).arrayBuffer())}
+async function unzip(buf){var u=new Uint8Array(buf),dv=new DataView(buf),eocd=-1;for(var i=u.length-22;i>=Math.max(0,u.length-70000);i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break}}if(eocd<0)throw new Error("no es un .xlsx válido");
+  var n=dv.getUint16(eocd+10,true),off=dv.getUint32(eocd+16,true),out={},td=new TextDecoder();
+  for(var k=0;k<n;k++){if(dv.getUint32(off,true)!==0x02014b50)break;var meth=dv.getUint16(off+10,true),csz=dv.getUint32(off+20,true),fnl=dv.getUint16(off+28,true),exl=dv.getUint16(off+30,true),cml=dv.getUint16(off+32,true),lho=dv.getUint32(off+42,true);
+    var name=td.decode(u.subarray(off+46,off+46+fnl));off+=46+fnl+exl+cml;var lfn=dv.getUint16(lho+26,true),lex=dv.getUint16(lho+28,true),st=lho+30+lfn+lex;out[name]={m:meth,d:u.subarray(st,st+csz)}}
+  return {get:async function(nm){var e=out[nm];if(!e)return "";return td.decode(e.m===0?e.d:await inflate(e.d))}}}
+function unesc(s){return s.replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&#(\d+);/g,function(m,c){return String.fromCodePoint(+c)}).replace(/&#x([0-9a-f]+);/gi,function(m,c){return String.fromCodePoint(parseInt(c,16))}).replace(/&amp;/g,"&")}
+function tText(x){var r="",re=/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>|<t\s*\/>/g,m;while((m=re.exec(x)))r+=m[1]||"";return unesc(r).replace(/_x000D_/g,"")}
+function colN(s){var n=0;for(var i=0;i<s.length;i++)n=n*26+s.charCodeAt(i)-64;return n-1}
+async function readXlsx(buf){var z=await unzip(buf),get=z.get;var ss=[],sx=await get("xl/sharedStrings.xml"),m,re=/<si>([\s\S]*?)<\/si>/g;while((m=re.exec(sx)))ss.push(tText(m[1]));
+  var stx=await get("xl/styles.xml"),fmts={},isDate=[],isPct=[];re=/<numFmt\s+numFmtId="(\d+)"\s+formatCode="([^"]*)"/g;while((m=re.exec(stx)))fmts[m[1]]=unesc(m[2]);
+  var xfs=(stx.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/)||[])[1]||"";re=/<xf\b[^>]*?numFmtId="(\d+)"/g;while((m=re.exec(xfs))){var id=+m[1],fc=fmts[id]||"";isDate.push((id>=14&&id<=22)||(id>=45&&id<=47)||(!!fc&&/[dmy]/i.test(fc.replace(/\[[^\]]*\]|"[^"]*"/g,""))&&!/^general$/i.test(fc)));isPct.push(id===9||id===10||/%/.test(fc))}
+  var wbx=await get("xl/workbook.xml"),rel=await get("xl/_rels/workbook.xml.rels"),rels={};re=/<Relationship\b[^>]*>/g;while((m=re.exec(rel))){var a=m[0],i2=(a.match(/Id="([^"]+)"/)||[])[1],tg=(a.match(/Target="([^"]+)"/)||[])[1];if(i2)rels[i2]=tg}
+  var sheets=[],shs=[];re=/<sheet\b[^>]*>/g;while((m=re.exec(wbx)))shs.push(m[0]);
+  for(var q=0;q<shs.length;q++){var s=shs[q],nm=unesc((s.match(/name="([^"]*)"/)||[])[1]||""),rid=(s.match(/r:id="([^"]+)"/)||[])[1],tgt=(rels[rid]||"").replace(/^\/?xl\//,"").replace(/^\//,"");
+    var x=await get("xl/"+tgt),rows=[],cr=/<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g,c;
+    while((c=cr.exec(x))){var at2=c[1],ref=(at2.match(/r="([A-Z]+)(\d+)"/)||[]);if(!ref[1])continue;var r=+ref[2]-1,col=colN(ref[1]),t=(at2.match(/t="(\w+)"/)||[])[1],sI=+((at2.match(/s="(\d+)"/)||[])[1]||0),body=c[2]||"",v=(body.match(/<v>([\s\S]*?)<\/v>/)||[])[1],val=null;
+      if(t==="s")val=v!=null?ss[+v]:null;else if(t==="inlineStr")val=tText(body);else if(t==="str"||t==="e")val=v!=null?unesc(v):null;else if(t==="b")val=v==="1";else if(v!=null){var num=+v;
+        if(isDate[sI]&&num>=0&&num<1){var mn=Math.round(num*1440);val={t:("0"+Math.floor(mn/60)).slice(-2)+":"+("0"+mn%60).slice(-2)}}else if(isDate[sI]&&num>0&&num<2958466){val={d:new Date(Math.round((num-25569)*864e5)).toISOString().slice(0,10)}}else if(isPct[sI])val=String(Math.round(num*10000)/100).replace(".",",").replace(/,0+$/,"")+"%";else val=num}
+      if(val===null||val==="")continue;(rows[r]=rows[r]||[])[col]=val}
+    for(var i3=0;i3<rows.length;i3++)if(!rows[i3])rows[i3]=[];sheets.push({name:nm,rows:rows})}
+  return sheets}
+/* ---- el "host" que la app espera ---- */
+function host(){return {web:true,
+  readPatch:function(){return JSON.parse(JSON.stringify(base))},
+  writePatch:function(s){try{push(JSON.parse(s));return {ok:1}}catch(e){return {error:e.message}}},
+  saveFile:function(dir,name,b64){var bin=atob(b64),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);var p=(dir||APPDIR+"/Descargas")+"/"+name.replace(/[\/:]/g,"-");
+    gf("PUT",dp(p)+"/content",new Blob([u]),{"Content-Type":"application/octet-stream"}).then(function(r){if(r.ok)r.json().then(function(j){if(j.webUrl)window.open(j.webUrl,"_blank")})});return {path:p}},
+  reveal:function(){},info:function(){return {web:true,user:me.mail||me.userPrincipalName||""}},onUpdate:function(){},
+  listDir:async function(rel,deep){var out=[];async function walk(p,depth){var url=dp(p)+"/children?$top=999&$select=name,size,lastModifiedDateTime,folder,file";while(url){var j;try{j=await gjson("GET",url)}catch(e){return}for(var i=0;i<(j.value||[]).length;i++){var x=j.value[i];if(x.name.charAt(0)==="."||x.name.indexOf("~$")===0)continue;var r=p+"/"+x.name;if(x.folder){if(depth<(deep||3))await walk(r,depth+1)}else out.push({rel:r,name:x.name,size:x.size||0,mtime:Date.parse(x.lastModifiedDateTime)||0})}url=j["@odata.nextLink"]||null}}await walk(rel,0);return out},
+  openFile:async function(rel){var w=window.open("about:blank","_blank");try{var j=await gjson("GET",dp(rel)+"?$select=webUrl");if(w)w.location.href=j.webUrl;else location.href=j.webUrl;return {ok:1}}catch(e){if(w)w.close();return {error:e.message}}},
+  revealFile:async function(rel){var p=String(rel).split("/").slice(0,-1).join("/");return this.openFile(p)},
+  openUrl:async function(u){window.open(u,"_blank");return {ok:1}},
+  ms:{status:async function(){return {signedIn:true,user:me.mail||me.userPrincipalName||""}},loginStart:async function(){return {error:"Ya has iniciado sesión con Microsoft en esta versión web."}},loginWait:async function(){return {}},logout:async function(){try{localStorage.removeItem(TK)}catch(e){}location.href=auth()+"logout?post_logout_redirect_uri="+encodeURIComponent(RED);return {}},
+    draft:async function(m){try{var rec=function(a){return (a||[]).filter(Boolean).map(function(x){return {emailAddress:{address:x}}})};var d=await gjson("POST","/me/messages",{subject:m.subject||"",body:{contentType:"HTML",content:m.html||""},toRecipients:rec(m.to),ccRecipients:rec(m.cc)});
+      for(var i=0;i<(m.files||[]).length;i++){var rel=m.files[i],name=rel.split("/").pop(),buf=await (await gf("GET",dp(rel)+"/content")).arrayBuffer();
+        if(buf.byteLength<3*1024*1024){var b="",u=new Uint8Array(buf);for(var k=0;k<u.length;k+=32768)b+=String.fromCharCode.apply(null,u.subarray(k,k+32768));await gjson("POST","/me/messages/"+d.id+"/attachments",{"@odata.type":"#microsoft.graph.fileAttachment",name:name,contentBytes:btoa(b)})}
+        else{var s=await gjson("POST","/me/messages/"+d.id+"/attachments/createUploadSession",{AttachmentItem:{attachmentType:"file",name:name,size:buf.byteLength}}),CH=320*1024*12;for(var o=0;o<buf.byteLength;o+=CH){var part=buf.slice(o,Math.min(o+CH,buf.byteLength));var rr=await fetch(s.uploadUrl,{method:"PUT",headers:{"Content-Range":"bytes "+o+"-"+(o+part.byteLength-1)+"/"+buf.byteLength},body:part});if(rr.status>=300)throw new Error("No se ha podido adjuntar "+name)}}}
+      return {ok:1,webLink:d.webLink||""}}catch(e){return {error:e.message,login:!!e.login}}}},
+  invoke:async function(ch,a,b){
+    if(ch==="ext:xlsx"){try{var meta=await gjson("GET",dp(a)+"?$select=lastModifiedDateTime");var mt=Date.parse(meta.lastModifiedDateTime)||0;if(b&&+b===mt)return {mtime:mt,unchanged:true};var buf=await (await gf("GET",dp(a)+"/content")).arrayBuffer();return {mtime:mt,sheets:await readXlsx(buf)}}catch(e){return e.status===404?{error:"no encuentro el archivo",missing:true}:{error:e.message}}}
+    if(ch==="ext:fetch"){try{var r=await fetch(a,{headers:{Accept:"application/json"}});return {status:r.status,body:await r.text()}}catch(e){return {status:599,body:"",error:e.message}}}
+    if(ch==="ext:clip"){try{await navigator.clipboard.write([new ClipboardItem({"text/html":new Blob([a.html],{type:"text/html"}),"text/plain":new Blob([a.text],{type:"text/plain"})})]);return {ok:1}}catch(e){return {error:e.message}}}
+    if(ch==="ext:mailto"){location.href=a;return {ok:1}}
+    throw new Error("No handler registered for "+ch)}}}
+function addScript(code){var s=document.createElement("script");s.textContent=code;document.body.appendChild(s)}
+function runApp(seed,W){window.__SEED=seed;window.mesaHost=host();if(W.icon){["apple-touch-icon","icon"].forEach(function(r){var l=document.createElement("link");l.rel=r;l.href="data:image/png;base64,"+W.icon;document.head.appendChild(l)})}var st=document.createElement("style");st.textContent=W.css;document.head.appendChild(st);document.title="Mesa de Derechos";
+  var d=document.createElement("div");d.innerHTML=W.html;while(d.firstChild)document.body.appendChild(d.firstChild);(W.libs||[]).forEach(addScript);$("#boot").remove();addScript(W.app);
+  setInterval(poll,60000);document.addEventListener("visibilitychange",function(){if(!document.hidden)poll()})}
+function showLogin(err){msg((err?'<p class="berr">'+err+'</p>':"")+'<button class="bbtn" id="blogin">Entrar con Microsoft</button><p class="bnote">Usa tu cuenta de Luna Books. Tus datos se leen y se guardan en tu OneDrive.</p>');$("#blogin").onclick=function(){login()}}
+function showSetup(){msg('<p>Pega los datos del registro de la app en Microsoft (Entra ID):</p><input id="bcid" placeholder="ID de aplicación (cliente)"><input id="bten" placeholder="ID de directorio (inquilino)"><button class="bbtn" id="bsave">Guardar</button>');$("#bsave").onclick=function(){var c={clientId:$("#bcid").value.trim(),tenant:$("#bten").value.trim()};if(!c.clientId)return;localStorage.setItem("mesa.web.cfg",JSON.stringify(c));location.reload()}}
+async function boot(){if(!CFG.clientId){showSetup();return}
+  var qs=new URLSearchParams(location.search);
+  if(qs.get("error")){history.replaceState(null,"",RED);if(qs.get("error")==="interaction_required"||qs.get("error")==="login_required"){showLogin();return}showLogin("Microsoft dice: "+(qs.get("error_description")||qs.get("error")));return}
+  if(qs.get("code")){var pk={};try{pk=JSON.parse(sessionStorage.getItem("mesa.pkce")||"{}")}catch(e){}history.replaceState(null,"",RED);
+    if(pk.st!==qs.get("state")){showLogin("La sesión no coincide, vuelve a entrar.");return}try{tok=await tokenReq({grant_type:"authorization_code",code:qs.get("code"),redirect_uri:RED,code_verifier:pk.v})}catch(e){showLogin("No se ha podido iniciar sesión: "+e.message);return}}
+  try{await at()}catch(e){showLogin();return}
+  try{msg("Cargando tus datos de OneDrive…");me=await gjson("GET","/me?$select=mail,userPrincipalName,displayName");
+    var sr=await gf("GET",dp(SEEDP)+"/content");if(!sr.ok)throw new Error("No encuentro "+SEEDP+" en tu OneDrive");var seed=await sr.json();try{var wc=await gf("GET",dp(APPDIR+"/app/web-config.json")+"/content");if(wc.ok)window.__WEBCFG=await wc.json()}catch(e){}msg("Cargando la app…");var wr=await gf("GET",dp(APPDIR+"/app/web-app.json")+"/content");if(!wr.ok)throw new Error("No encuentro la app web en tu OneDrive");var W=await wr.json();await loadPatch();runApp(seed,W)}
+  catch(e){if(e.login){showLogin();return}msg('<p class="berr">'+String(e.message||e)+'</p><button class="bbtn" onclick="location.reload()">Reintentar</button>')}}
+document.addEventListener("DOMContentLoaded",boot);
+})();
+</script>
+</body></html>
